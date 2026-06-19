@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<XMLDB PATH="local/edunotify/db" VERSION="2026061900" COMMENT="EduNotify - Moodle WhatsApp Notifications"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
+>
+  <TABLES>
+    <TABLE NAME="local_edunotify_log" COMMENT="Log of sent notifications">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="cmid" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="modname" TYPE="char" LENGTH="50" NOTNULL="true"/>
+        <FIELD NAME="recipients" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="eventtype" TYPE="char" LENGTH="30" NOTNULL="true"/>
+        <FIELD NAME="status" TYPE="char" LENGTH="20" NOTNULL="true"/>
+        <FIELD NAME="error_msg" TYPE="text" NOTNULL="false" COMMENT="Detailed error message on failure"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="courseid" TYPE="foreign" FIELDS="courseid" REFTABLE="course" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="idx_cmid" UNIQUE="false" FIELDS="cmid"/>
+        <INDEX NAME="idx_status" UNIQUE="false" FIELDS="status"/>
+        <INDEX NAME="idx_timecreated" UNIQUE="false" FIELDS="timecreated"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="local_edunotify_recipient" COMMENT="Per-user recipient log for privacy/GDPR">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="logid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="phone" TYPE="char" LENGTH="50" NOTNULL="true"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="logid" TYPE="foreign" FIELDS="logid" REFTABLE="local_edunotify_log" REFFIELDS="id" ONDELETE="cascade"/>
+        <KEY NAME="userid" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+      </KEYS>
+    </TABLE>
+
+    <TABLE NAME="local_edunotify_optout" COMMENT="Global user opt-out">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="opted_out" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="userid" TYPE="foreign-unique" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+      </KEYS>
+    </TABLE>
+
+    <TABLE NAME="local_edunotify_course_optout" COMMENT="Per-course user opt-out">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="userid_fk" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id" ONDELETE="cascade"/>
+        <KEY NAME="courseid_fk" TYPE="foreign" FIELDS="courseid" REFTABLE="course" REFFIELDS="id" ONDELETE="cascade"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="idx_userid_courseid" UNIQUE="true" FIELDS="userid, courseid"/>
+      </INDEXES>
+    </TABLE>
+
+
+    <TABLE NAME="local_edunotify_queue" COMMENT="Queued notifications for retry">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="payload" TYPE="text" NOTNULL="true"/>
+        <FIELD NAME="attempts" TYPE="int" LENGTH="3" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="idx_attempts" UNIQUE="false" FIELDS="attempts"/>
+      </INDEXES>
+    </TABLE>
+  </TABLES>
+</XMLDB>
