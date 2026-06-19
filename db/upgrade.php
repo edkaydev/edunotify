@@ -95,8 +95,6 @@ function xmldb_local_edunotify_upgrade($oldversion) {
 
         set_config('batchsize', 25, 'local_edunotify');
         set_config('batchpause', 60, 'local_edunotify');
-        set_config('quietstart', '22:00', 'local_edunotify');
-        set_config('quietend', '07:00', 'local_edunotify');
         set_config('botport', 5001, 'local_edunotify');
 
         $defaultbody = "📢 *EduNotify* 📢\n\n*Course:* {{courseName}}\n*Instructor:* {{instructor}}\n*Action:* {{actionType}}\n*Item:* {{activityTitle}}\n{{activityUrl}}\n\nPlease log into the portal to view.\n\nTo opt out, reply STOP or visit: {{optoutUrl}}";
@@ -150,6 +148,12 @@ function xmldb_local_edunotify_upgrade($oldversion) {
             $dbman->drop_table($table);
         }
         upgrade_plugin_savepoint(true, 2026061902, 'local', 'edunotify');
+    }
+
+    if ($oldversion < 2026061903) {
+        unset_config('quietstart', 'local_edunotify');
+        unset_config('quietend', 'local_edunotify');
+        upgrade_plugin_savepoint(true, 2026061903, 'local', 'edunotify');
     }
 
     return true;

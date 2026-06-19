@@ -111,19 +111,4 @@ class util {
         $types = explode(',', $allowed);
         return in_array($modtype, array_map('trim', $types));
     }
-
-    public static function is_quiet_hours(): bool {
-        $start = get_config('local_edunotify', 'quietstart');
-        $end = get_config('local_edunotify', 'quietend');
-        if (empty($start) || empty($end)) return false;
-
-        $now = (int)date('Gi');
-        $start = (int)str_replace(':', '', $start);
-        $end = (int)str_replace(':', '', $end);
-
-        if ($start < $end) {
-            return $now >= $start && $now < $end;
-        }
-        return $now >= $start || $now < $end;
-    }
 }

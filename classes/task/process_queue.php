@@ -4,7 +4,6 @@ namespace local_edunotify\task;
 defined('MOODLE_INTERNAL') || die();
 
 require_once(__DIR__ . '/../bot.php');
-require_once(__DIR__ . '/../util.php');
 
 class process_queue extends \core\task\scheduled_task {
     public function get_name() {
@@ -16,11 +15,6 @@ class process_queue extends \core\task\scheduled_task {
 
         $queued = $DB->get_records('local_edunotify_queue', null, 'timecreated ASC', '*', 0, 50);
         if (empty($queued)) return;
-
-        if (\local_edunotify\util::is_quiet_hours()) {
-            mtrace(get_string('queue_quiet_hours_skip', 'local_edunotify', count($queued)));
-            return;
-        }
 
         $botrunning = \local_edunotify\bot::is_running();
         if (!$botrunning) {
@@ -64,11 +58,6 @@ class process_queue extends \core\task\scheduled_task {
 
     public static function enqueue(array $payload): void {
         global $DB;
-
-        if (\local_edunotify\util::is_quiet_hours()) {
-            mtrace(get_string('queue_quiet_hours', 'local_edunotify'));
-            return;
-        }
 
         $record = new \stdClass();
         $record->payload = json_encode($payload);

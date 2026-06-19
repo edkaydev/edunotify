@@ -102,28 +102,6 @@ if ($hassiteconfig) {
     ));
 
     $settings->add(new admin_setting_heading(
-        'local_edunotify/quiet_heading',
-        get_string('quiet_hours', 'local_edunotify'),
-        get_string('quiet_hours_desc', 'local_edunotify')
-    ));
-
-    $settings->add(new admin_setting_configtext(
-        'local_edunotify/quietstart',
-        get_string('quiet_start', 'local_edunotify'),
-        get_string('quiet_start_desc', 'local_edunotify'),
-        '22:00',
-        PARAM_TEXT
-    ));
-
-    $settings->add(new admin_setting_configtext(
-        'local_edunotify/quietend',
-        get_string('quiet_end', 'local_edunotify'),
-        get_string('quiet_end_desc', 'local_edunotify'),
-        '07:00',
-        PARAM_TEXT
-    ));
-
-    $settings->add(new admin_setting_heading(
         'local_edunotify/botheading',
         get_string('bot_management', 'local_edunotify'),
         get_string('bot_management_desc', 'local_edunotify')

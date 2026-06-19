@@ -51,8 +51,6 @@ class bot {
         $countrycode = get_config('local_edunotify', 'countrycode') ?: '256';
         $batchsize = get_config('local_edunotify', 'batchsize') ?: 25;
         $batchpause = get_config('local_edunotify', 'batchpause') ?: 60;
-        $quietstart = get_config('local_edunotify', 'quietstart') ?: '22:00';
-        $quietend = get_config('local_edunotify', 'quietend') ?: '07:00';
         $wwwroot = $CFG->wwwroot ?? '';
 
         $env = [
@@ -61,8 +59,6 @@ class bot {
             'COUNTRY_CODE' => $countrycode,
             'EDUNOTIFY_BATCH_SIZE' => $batchsize,
             'EDUNOTIFY_BATCH_PAUSE_MS' => $batchpause * 1000,
-            'EDUNOTIFY_QUIET_START' => $quietstart,
-            'EDUNOTIFY_QUIET_END' => $quietend,
             'EDUNOTIFY_OPTOUT_URL' => $wwwroot . '/local/edunotify/editphone.php',
             'PATH' => getenv('PATH'),
         ];
