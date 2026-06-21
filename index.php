@@ -17,6 +17,7 @@ $action = optional_param('action', '', PARAM_ALPHA);
 $tab = optional_param('tab', 'dashboard', PARAM_ALPHA);
 
 if ($action === 'status') {
+    \local_edunotify\bot::clear_cache();
     $botdata = \local_edunotify\bot::get_status();
     header('Content-Type: application/json');
     echo json_encode($botdata);
@@ -25,14 +26,19 @@ if ($action === 'status') {
 
 $starterror = '';
 $startok = false;
+$startchecks = null;
+$startstatus = null;
 $canmanage = has_capability('local/edunotify:manage', $context);
 
 if ($canmanage && data_submitted() && confirm_sesskey()) {
     if ($action === 'start') {
-        if (\local_edunotify\bot::start()) {
+        $result = \local_edunotify\bot::start();
+        $startchecks = $result['checks'] ?? [];
+        if ($result['success']) {
             $startok = true;
+            $startstatus = $result['status'] ?? null;
         } else {
-            $starterror = \local_edunotify\bot::get_last_error();
+            $starterror = $result['error'] ?? \local_edunotify\bot::get_last_error();
         }
     }
 
@@ -73,7 +79,22 @@ if ($canmanage && data_submitted() && confirm_sesskey()) {
                 redirect($PAGE->url, get_string('phone_invalid', 'local_edunotify'), null,
                     \core\output\notification::NOTIFY_ERROR);
             }
-            $result = \local_edunotify\bot::send_test($testnumber, get_string('test_message', 'local_edunotify'));
+            $template = get_config('local_edunotify', 'template_course_module_created');
+        if (!empty($template)) {
+            $wwwroot = $CFG->wwwroot ?? 'https://moodle.example.com';
+            $replacements = [
+                '{{courseName}}' => get_string('preview_sample_course', 'local_edunotify'),
+                '{{activityTitle}}' => get_string('preview_sample_activity', 'local_edunotify'),
+                '{{activityUrl}}' => $wwwroot . '/mod/assign/view.php?id=1',
+                '{{actionType}}' => 'New activity added',
+                '{{instructor}}' => get_string('preview_sample_instructor', 'local_edunotify'),
+                '{{optoutUrl}}' => $wwwroot . '/local/edunotify/editphone.php',
+            ];
+            $messageBody = strtr($template, $replacements);
+        } else {
+            $messageBody = get_string('test_message', 'local_edunotify');
+        }
+        $result = \local_edunotify\bot::send_test($testnumber, $messageBody);
             if ($result && !empty($result['success'])) {
                 redirect($PAGE->url, get_string('test_sent', 'local_edunotify', s($testnumber)), null,
                     \core\output\notification::NOTIFY_SUCCESS);
@@ -156,8 +177,46 @@ echo $OUTPUT->header();
 if ($startok) {
     echo $OUTPUT->notification(get_string('bot_started', 'local_edunotify'), \core\output\notification::NOTIFY_SUCCESS);
 }
-if (!empty($starterror)) {
+if (!empty($starterror) && $startchecks === null) {
     echo $OUTPUT->notification($starterror, \core\output\notification::NOTIFY_ERROR);
+}
+if ($startchecks !== null && !$startok) {
+    echo '<div class="uwn-section"><h3>Setup Steps (run in order)</h3>';
+    echo '<p class="uwn-setup-desc">Steps 1-2 need sudo (one-time). After those, come back and <strong>click Start Bot</strong> — it will auto-install deps and launch.</p>';
+    echo '<ol class="uwn-setup-list">';
+    $steps = [
+        ['name' => 'Install Node.js & npm', 'desc' => 'Runtime needed to run the bot process.', 'cmd' => 'sudo apt install -y nodejs npm'],
+        ['name' => 'Install Chromium browser', 'desc' => 'Browser engine that WhatsApp Web runs on.', 'cmd' => 'sudo apt install -y chromium-browser'],
+        ['name' => 'Install bot dependencies', 'desc' => 'Downloads required Node.js libraries (auto-runs when you click Start Bot).', 'cmd' => 'cd /var/www/html/moodle/local/edunotify/bot && npm install'],
+        ['name' => 'Click Start Bot', 'desc' => 'Launches the bot. Scan the QR code with WhatsApp to connect.', 'cmd' => ''],
+    ];
+    foreach ($steps as $i => $s) {
+        $done = false;
+        if ($i === 0 && !empty($startchecks[0]['status'])) $done = true;
+        if ($i === 1 && !empty($startchecks[3]['status'])) $done = true;
+        if ($i === 2 && !empty($startchecks[2]['status'])) $done = true;
+        echo '<li class="uwn-setup-step">';
+        echo '<strong>';
+        if ($done) {
+            echo '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E8E3E" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:6px;"><polyline points="20,6 9,17 4,12"></polyline></svg>';
+        } elseif ($i < 3) {
+            echo '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9AA0A6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:6px;"><circle cx="12" cy="12" r="10"></circle><polyline points="12,6 12,12 16,14"></polyline></svg>';
+        }
+        echo s($s['name']) . '</strong>';
+        echo '<div class="uwn-setup-step-desc">' . $s['desc'] . '</div>';
+        if (!$done && !empty($s['cmd'])) {
+            $cmd = htmlspecialchars($s['cmd']);
+            echo '<div class="uwn-setup-cmd-wrap">';
+            echo '<code class="uwn-setup-cmd">' . $cmd . '</code>';
+            echo '<button onclick="navigator.clipboard.writeText(\'' . $cmd . '\').then(()=>this.textContent=\'Copied!\').catch(()=>this.textContent=\'Copy\')" class="uwn-setup-copy">Copy</button>';
+            echo '</div>';
+        }
+        if ($i === 3 && !$done) {
+            echo '<div class="uwn-setup-hint"><em>Complete steps 1-3 first, then click the Start Bot button above.</em></div>';
+        }
+        echo '</li>';
+    }
+    echo '</ol></div>';
 }
 ?>
 
@@ -173,23 +232,23 @@ if (!empty($starterror)) {
         <?php if ($canmanage): ?>
         <div class="uwn-header-actions">
             <?php if (!$botrunning): ?>
-                <form method="post" action="<?php echo $PAGE->url; ?>" style="display:inline;">
+                <form method="post" action="<?php echo $PAGE->url; ?>" class="uwn-inline-form">
                     <input type="hidden" name="action" value="start">
                     <input type="hidden" name="sesskey" value="<?php echo sesskey(); ?>">
                     <button type="submit" class="uwn-btn uwn-btn-primary"><?php echo get_string('start_bot', 'local_edunotify'); ?></button>
                 </form>
             <?php else: ?>
-                <form method="post" action="<?php echo $PAGE->url; ?>" style="display:inline;" onsubmit="return confirm('<?php echo addslashes(get_string('confirm_stop', 'local_edunotify')); ?>')">
+                <form method="post" action="<?php echo $PAGE->url; ?>" class="uwn-inline-form" onsubmit="return confirm('<?php echo addslashes(get_string('confirm_stop', 'local_edunotify')); ?>')">
                     <input type="hidden" name="action" value="stop">
                     <input type="hidden" name="sesskey" value="<?php echo sesskey(); ?>">
                     <button type="submit" class="uwn-btn uwn-btn-outline" id="uwn-stop-btn"><?php echo get_string('stop_bot', 'local_edunotify'); ?></button>
                 </form>
-                <form method="post" action="<?php echo $PAGE->url; ?>" style="display:inline;">
+                <form method="post" action="<?php echo $PAGE->url; ?>" class="uwn-inline-form">
                     <input type="hidden" name="action" value="reconnect">
                     <input type="hidden" name="sesskey" value="<?php echo sesskey(); ?>">
                     <button type="submit" class="uwn-btn uwn-btn-warning"><?php echo get_string('reconnect', 'local_edunotify'); ?></button>
                 </form>
-                <form method="post" action="<?php echo $PAGE->url; ?>" style="display:inline;" onsubmit="return confirm('<?php echo addslashes(get_string('confirm_logout', 'local_edunotify')); ?>')">
+                <form method="post" action="<?php echo $PAGE->url; ?>" class="uwn-inline-form" onsubmit="return confirm('<?php echo addslashes(get_string('confirm_logout', 'local_edunotify')); ?>')">
                     <input type="hidden" name="action" value="logout">
                     <input type="hidden" name="sesskey" value="<?php echo sesskey(); ?>">
                     <button type="submit" class="uwn-btn uwn-btn-danger" id="uwn-logout-btn"><?php echo get_string('logout', 'local_edunotify'); ?></button>
@@ -199,12 +258,14 @@ if (!empty($starterror)) {
         <?php endif; ?>
     </div>
 
-    <div class="uwn-tabs" style="display:flex;gap:4px;margin-bottom:20px;border-bottom:2px solid #e5e7eb;padding-bottom:0;">
-        <a href="<?php echo $PAGE->url; ?>?tab=dashboard" class="uwn-tab <?php echo $tab === 'dashboard' ? 'active' : ''; ?>" style="padding:10px 18px;text-decoration:none;font-weight:600;font-size:0.9rem;border-bottom:2px solid <?php echo $tab === 'dashboard' ? '#37e380' : 'transparent'; ?>;margin-bottom:-2px;color:<?php echo $tab === 'dashboard' ? '#111827' : '#6b7280'; ?>;">
-            📊 <?php echo get_string('dashboard', 'local_edunotify'); ?>
+    <div class="uwn-tabs">
+        <a href="<?php echo $PAGE->url; ?>?tab=dashboard" class="uwn-tab <?php echo $tab === 'dashboard' ? 'active' : ''; ?>">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            <?php echo get_string('dashboard', 'local_edunotify'); ?>
         </a>
-        <a href="<?php echo $PAGE->url; ?>?tab=adoption" class="uwn-tab <?php echo $tab === 'adoption' ? 'active' : ''; ?>" style="padding:10px 18px;text-decoration:none;font-weight:600;font-size:0.9rem;border-bottom:2px solid <?php echo $tab === 'adoption' ? '#37e380' : 'transparent'; ?>;margin-bottom:-2px;color:<?php echo $tab === 'adoption' ? '#111827' : '#6b7280'; ?>;">
-            📱 <?php echo get_string('phone_adoption', 'local_edunotify'); ?>
+        <a href="<?php echo $PAGE->url; ?>?tab=adoption" class="uwn-tab <?php echo $tab === 'adoption' ? 'active' : ''; ?>">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"></path></svg>
+            <?php echo get_string('phone_adoption', 'local_edunotify'); ?>
         </a>
     </div>
 
@@ -214,6 +275,18 @@ if (!empty($starterror)) {
         <p class="uwn-section-desc"><?php echo get_string('phone_adoption_desc', 'local_edunotify'); ?></p>
 
         <?php
+        $adoptionperpage = 20;
+        $countsql = "SELECT COUNT(*) FROM (
+                       SELECT c.id
+                       FROM {course} c
+                       JOIN {context} ctx ON ctx.instanceid = c.id AND ctx.contextlevel = ?
+                       JOIN {role_assignments} ra ON ra.contextid = ctx.id AND ra.roleid = ?
+                       WHERE c.id != ?
+                       GROUP BY c.id
+                     ) edunotify_adoption_count";
+        $countparams = [CONTEXT_COURSE, $studentrole->id, SITEID];
+        $totaladoption = (int)$DB->count_records_sql($countsql, $countparams);
+
         $sql = "SELECT c.id, c.fullname, c.shortname,
                        COUNT(DISTINCT u.id) AS totalstudents,
                        COUNT(DISTINCT CASE WHEN idata.data IS NOT NULL AND idata.data != '' THEN u.id END) AS withphone
@@ -228,7 +301,7 @@ if (!empty($starterror)) {
         $params = [CONTEXT_COURSE, $studentrole->id];
         if ($phonefield) $params[] = $phonefield->id;
         $params[] = SITEID;
-        $courses = $DB->get_records_sql($sql, $params);
+        $courses = $DB->get_records_sql($sql, $params, $page * $adoptionperpage, $adoptionperpage);
         ?>
 
         <div class="uwn-table-wrap">
@@ -253,20 +326,20 @@ if (!empty($starterror)) {
                         <td><?php echo $c->totalstudents; ?></td>
                         <td><?php echo $c->withphone; ?></td>
                         <td>
-                            <div style="display:flex;align-items:center;gap:8px;">
-                                <div style="flex:1;height:8px;background:#e5e7eb;border-radius:4px;max-width:120px;">
-                                    <div style="height:8px;background:<?php echo $pct > 50 ? '#37e380' : ($pct > 20 ? '#f59e0b' : '#ef4444'); ?>;border-radius:4px;width:<?php echo $pct; ?>%;"></div>
+                            <div class="uwn-progress-wrap">
+                                <div class="uwn-progress">
+                                    <div class="uwn-progress-bar <?php echo $pct > 50 ? '' : ($pct > 20 ? 'medium' : 'low'); ?>" style="width:<?php echo $pct; ?>%;"></div>
                                 </div>
                                 <span><?php echo $pct; ?>%</span>
                             </div>
                         </td>
                         <?php if ($canmanage): ?>
                         <td>
-                            <form method="post" style="display:inline;">
+                            <form method="post" class="uwn-inline-form">
                                 <input type="hidden" name="action" value="bulk_reminder">
                                 <input type="hidden" name="courseid" value="<?php echo $c->id; ?>">
                                 <input type="hidden" name="sesskey" value="<?php echo sesskey(); ?>">
-                                <button type="submit" class="uwn-btn uwn-btn-sm" style="font-size:0.78rem;padding:4px 10px;"><?php echo get_string('remind', 'local_edunotify'); ?></button>
+                                <button type="submit" class="uwn-btn uwn-btn-sm"><?php echo get_string('remind', 'local_edunotify'); ?></button>
                             </form>
                         </td>
                         <?php endif; ?>
@@ -275,6 +348,16 @@ if (!empty($starterror)) {
                 </tbody>
             </table>
         </div>
+        <?php if ($totaladoption > $adoptionperpage): ?>
+        <div class="uwn-pagination-wrap">
+            <?php
+            $adoptionurl = $PAGE->url . '?tab=adoption&page=' . $page;
+            $adoptionpagingbar = new \paging_bar($totaladoption, $page, $adoptionperpage, $adoptionurl);
+            $adoptionpagingbar->maxdisplay = 10;
+            echo $OUTPUT->render($adoptionpagingbar);
+            ?>
+        </div>
+        <?php endif; ?>
     </div>
 
 <?php else: ?>
@@ -283,21 +366,27 @@ if (!empty($starterror)) {
     <div class="uwn-section">
         <h2><?php echo get_string('setup_status', 'local_edunotify'); ?></h2>
         <?php
-            $hasnode = trim(shell_exec('which node 2>/dev/null') ?? '');
-            $hasnpm = trim(shell_exec('which npm 2>/dev/null') ?? '');
-            $haschrome = \local_edunotify\chrome_detector::detect();
-            $hasdeps = is_dir(__DIR__ . '/bot/node_modules');
-            $checks = [
-                get_string('check_node', 'local_edunotify') => !empty($hasnode),
-                get_string('check_npm', 'local_edunotify') => !empty($hasnpm),
-                get_string('check_deps', 'local_edunotify') => $hasdeps,
-                get_string('check_chrome', 'local_edunotify') => !empty($haschrome),
+            $reqchecks = \local_edunotify\bot::check_requirements();
+            $checkmap = [
+                get_string('check_node', 'local_edunotify') => 0,
+                get_string('check_npm', 'local_edunotify') => 1,
+                get_string('check_deps', 'local_edunotify') => 2,
+                get_string('check_chrome', 'local_edunotify') => 3,
             ];
+            $checks = [];
+            foreach ($checkmap as $label => $idx) {
+                $checks[$label] = !empty($reqchecks[$idx]['status']);
+            }
         ?>
         <div class="uwn-check-grid">
             <?php foreach ($checks as $label => $ok): ?>
             <span class="uwn-check-badge <?php echo $ok ? 'ok' : 'missing'; ?>">
-                <?php echo $ok ? '✅' : '⚠️'; ?> <?php echo $label; ?>
+                <?php if ($ok): ?>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1E8E3E" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20,6 9,17 4,12"></polyline></svg>
+        <?php else: ?>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#D93025" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+        <?php endif; ?>
+        <?php echo $label; ?>
             </span>
             <?php endforeach; ?>
         </div>
@@ -326,7 +415,9 @@ if (!empty($starterror)) {
         </div>
 
         <div class="uwn-card">
-            <div class="uwn-card-icon">📱</div>
+            <div class="uwn-card-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#5F6368" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"></path></svg>
+            </div>
             <div class="uwn-card-body">
                 <h3><?php echo get_string('students_with_phones', 'local_edunotify'); ?></h3>
                 <div class="uwn-stat"><?php echo $totalwithphones; ?></div>
@@ -335,7 +426,9 @@ if (!empty($starterror)) {
         </div>
 
         <div class="uwn-card">
-            <div class="uwn-card-icon">📨</div>
+            <div class="uwn-card-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#5F6368" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+            </div>
             <div class="uwn-card-body">
                 <h3><?php echo get_string('recent_notifications', 'local_edunotify'); ?></h3>
                 <div class="uwn-stat"><?php echo $totalcount; ?></div>
@@ -344,8 +437,12 @@ if (!empty($starterror)) {
         </div>
     </div>
 
-    <?php $hasqr = $botrunning && !empty($botdata['qr']); ?>
-    <div class="uwn-section uwn-qr-section" id="uwn-qr-section" style="<?php echo $hasqr ? '' : 'display:none;'; ?>">
+    <?php
+    $hasqr = $botrunning && !empty($botdata['qr']);
+    $stillconnecting = is_array($botdata) && ($botdata['status'] ?? '') !== 'connected';
+    $showqrsection = $hasqr || ($startok && $stillconnecting);
+    ?>
+    <div class="uwn-section uwn-qr-section" id="uwn-qr-section" <?php echo $showqrsection ? '' : 'style="display:none;"'; ?>>
         <div class="uwn-qr-inner">
             <h2><?php echo get_string('scan_qr', 'local_edunotify'); ?></h2>
             <p><?php echo get_string('scan_qr_desc', 'local_edunotify'); ?></p>
@@ -354,7 +451,7 @@ if (!empty($starterror)) {
             </div>
             <p class="uwn-qr-hint"><?php echo get_string('qr_expiry', 'local_edunotify'); ?></p>
             <?php if ($canmanage): ?>
-            <form method="post" action="<?php echo $PAGE->url; ?>" style="display:inline;">
+            <form method="post" action="<?php echo $PAGE->url; ?>" class="uwn-inline-form">
                 <input type="hidden" name="action" value="reconnect">
                 <input type="hidden" name="sesskey" value="<?php echo sesskey(); ?>">
                 <button type="submit" class="uwn-btn uwn-btn-warning"><?php echo get_string('refresh_qr', 'local_edunotify'); ?></button>
@@ -390,9 +487,23 @@ if (!empty($starterror)) {
     <div class="uwn-section">
         <h2><?php echo get_string('preview_message', 'local_edunotify'); ?></h2>
         <p class="uwn-section-desc"><?php echo get_string('preview_desc', 'local_edunotify'); ?></p>
-        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:16px;font-family:monospace;font-size:0.85rem;white-space:pre-wrap;max-width:500px;">
+        <div class="uwn-preview-box">
 <?php
-$preview = "📢 *EduNotify* 📢\n\n*Course:* " . get_string('preview_sample_course', 'local_edunotify') . "\n*Instructor:* " . get_string('preview_sample_instructor', 'local_edunotify') . "\n*Action:* New assignment added\n*Item:* " . get_string('preview_sample_activity', 'local_edunotify') . "\nhttps://moodle.example.com/mod/assign/view.php?id=1\n\n" . get_string('preview_footer', 'local_edunotify');
+$template = get_config('local_edunotify', 'template_course_module_created');
+        if (!empty($template)) {
+            $wwwroot = $CFG->wwwroot ?? 'https://moodle.example.com';
+            $replacements = [
+                '{{courseName}}' => get_string('preview_sample_course', 'local_edunotify'),
+                '{{activityTitle}}' => get_string('preview_sample_activity', 'local_edunotify'),
+                '{{activityUrl}}' => $wwwroot . '/mod/assign/view.php?id=1',
+                '{{actionType}}' => 'New activity added',
+                '{{instructor}}' => get_string('preview_sample_instructor', 'local_edunotify'),
+                '{{optoutUrl}}' => $wwwroot . '/local/edunotify/editphone.php',
+            ];
+            $preview = strtr($template, $replacements);
+        } else {
+            $preview = "[EN] *EduNotify* [EN]\n\n*Course:* " . get_string('preview_sample_course', 'local_edunotify') . "\n*Instructor:* " . get_string('preview_sample_instructor', 'local_edunotify') . "\n*Action:* New assignment added\n*Item:* " . get_string('preview_sample_activity', 'local_edunotify') . "\nhttps://moodle.example.com/mod/assign/view.php?id=1\n\n" . get_string('preview_footer', 'local_edunotify');
+        }
 echo s($preview);
 ?>
         </div>
@@ -426,11 +537,17 @@ echo s($preview);
                         <td><?php echo s($log->eventtype ?? '-'); ?></td>
                         <td><?php echo $log->recipients; ?></td>
                         <td><?php if ($log->status === 'sent'): ?>
-                            <span class="uwn-status-sent">✔ <?php echo get_string('sent', 'local_edunotify'); ?></span>
+                            <span class="uwn-status-sent">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;"><polyline points="20,6 9,17 4,12"></polyline></svg>
+                                <?php echo get_string('sent', 'local_edunotify'); ?>
+                            </span>
                         <?php else: ?>
-                            <span class="uwn-status-failed">✘ <?php echo get_string('failed', 'local_edunotify'); ?></span>
+                            <span class="uwn-status-failed">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                                <?php echo get_string('failed', 'local_edunotify'); ?>
+                            </span>
                         <?php endif; ?></td>
-                        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;font-size:0.8rem;color:#6b7280;">
+                        <td class="uwn-error-cell">
                             <?php echo s($log->error_msg ?? ''); ?>
                         </td>
                     </tr>
@@ -439,9 +556,9 @@ echo s($preview);
             </table>
         </div>
         <?php if ($totalcount > $perpage): ?>
-        <div style="margin-top:16px;text-align:center;">
+        <div class="uwn-pagination-wrap">
             <?php
-            $urlwithtab = $PAGE->url . '?tab=dashboard&page={$page}';
+            $urlwithtab = $PAGE->url . '?tab=dashboard&page=' . $page;
             $pagingbar = new \paging_bar($totalcount, $page, $perpage, $urlwithtab);
             $pagingbar->maxdisplay = 10;
             echo $OUTPUT->render($pagingbar);
@@ -464,10 +581,8 @@ echo s($preview);
     var statusMsg = container.querySelector('.uwn-status-msg');
     var statusIcon = container.querySelector('.uwn-dot');
 
-    <?php if ($botrunning && $botdata['status'] !== 'connected'): ?>
-    var pollCount = 0;
+    <?php if ($botrunning && (!is_array($botdata) || ($botdata['status'] ?? '') !== 'connected')): ?>
     var pollTimer = setInterval(function() {
-        pollCount++;
         var xhr = new XMLHttpRequest();
         xhr.open('GET', '<?php echo $PAGE->url; ?>?action=status&ts=' + Date.now(), true);
         xhr.onload = function() {
@@ -475,7 +590,13 @@ echo s($preview);
                 try {
                     var data = JSON.parse(xhr.responseText);
                     if (data.status === 'connected') {
-                        location.reload();
+                        clearInterval(pollTimer);
+                        if (qrSection) qrSection.style.display = 'none';
+                        if (statusIcon) statusIcon.className = 'uwn-dot uwn-dot-green';
+                        if (statusLabel) statusLabel.textContent = '<?php echo addslashes(get_string('connected', 'local_edunotify')); ?>';
+                        if (statusMsg) statusMsg.textContent = data.message || '';
+                        setTimeout(function() { window.location.reload(); }, 600);
+                        return;
                     }
                     if (data.qr && qrImg) {
                         qrImg.src = data.qr;
@@ -490,10 +611,8 @@ echo s($preview);
                         };
                         statusLabel.textContent = labels[data.status] || data.status;
                     }
-                    if (data.status === 'awaiting_scan' || data.status === 'connected') {
-                        if (statusIcon) {
-                            statusIcon.className = 'uwn-dot ' + (data.status === 'connected' ? 'uwn-dot-green' : 'uwn-dot-yellow');
-                        }
+                    if (data.status === 'awaiting_scan') {
+                        if (statusIcon) statusIcon.className = 'uwn-dot uwn-dot-yellow';
                     }
                 } catch(e) {}
             }

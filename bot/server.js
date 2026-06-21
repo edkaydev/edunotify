@@ -3,18 +3,20 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
 
 const PORT = parseInt(process.env.EDUNOTIFY_BOT_PORT || '5001', 10);
 const SESSION_PATH = process.env.EDUNOTIFY_SESSION_PATH || path.join(__dirname, 'session');
 const API_KEY = process.env.EDUNOTIFY_API_KEY || process.env.WANOTIFY_API_KEY || '';
 const COUNTRY_CODE = process.env.COUNTRY_CODE || '256';
-const BATCH_SIZE = parseInt(process.env.EDUNOTIFY_BATCH_SIZE || '25', 10);
-const BATCH_PAUSE_MS = parseInt(process.env.EDUNOTIFY_BATCH_PAUSE_MS || '60000', 10);
-const TEMPLATE = process.env.EDUNOTIFY_TEMPLATE || '';
+const BATCH_SIZE = parseInt(process.env.EDUNOTIFY_BATCH_SIZE || '20', 10);
+const BATCH_PAUSE_MS = parseInt(process.env.EDUNOTIFY_BATCH_PAUSE_MS || '90000', 10);
+const DAILY_LIMIT = parseInt(process.env.EDUNOTIFY_DAILY_LIMIT || '500', 10);
+const HOURLY_LIMIT = parseInt(process.env.EDUNOTIFY_HOURLY_LIMIT || '80', 10);
 const OPTOUT_URL = process.env.EDUNOTIFY_OPTOUT_URL || '';
 
 if (!API_KEY) {
-    console.error('[FATAL] EDUNOTIFY_API_KEY is not set. The bot will not start without an API key.');
+    console.error('[FATAL] EDUNOTIFY_API_KEY is not set.');
     process.exit(1);
 }
 
@@ -26,6 +28,27 @@ let connectionStatus = 'disconnected';
 let currentQR = null;
 let currentStatusMessage = 'Bot initialized';
 
+const todayKey = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+};
+let dailyCount = 0;
+let dailyReset = todayKey();
+let hourlyCount = 0;
+let hourlyReset = Date.now();
+
+function resetCounters() {
+    const now = todayKey();
+    if (now !== dailyReset) {
+        dailyCount = 0;
+        dailyReset = now;
+    }
+    if (Date.now() - hourlyReset > 3600000) {
+        hourlyCount = 0;
+        hourlyReset = Date.now();
+    }
+}
+
 function log(msg) {
     const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
     console.log(`[${ts}] ${msg}`);
@@ -33,6 +56,10 @@ function log(msg) {
 
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function jitter(base) {
+    return Math.round(base * (0.8 + Math.random() * 0.4));
 }
 
 function requireAuth(req, res, next) {
@@ -44,7 +71,7 @@ function requireAuth(req, res, next) {
 }
 
 function formatNumber(raw) {
-    let clean = raw.trim().replace(/[\s\-\+\(\)]/g, '');
+    let clean = raw.toString().trim().replace(/[\s\-\+\(\)]/g, '');
     if (clean.startsWith('0')) {
         clean = COUNTRY_CODE + clean.substring(1);
     }
@@ -54,7 +81,7 @@ function formatNumber(raw) {
     return clean;
 }
 
-function startClient() {
+async function startClient() {
     if (client) {
         try { client.destroy(); } catch (e) {}
         client = null;
@@ -67,6 +94,54 @@ function startClient() {
 
     process.env.CHROME_CRASHPAD_HANDLER = '';
 
+    let chromePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    if (!chromePath) {
+        const candidates = [
+            '/usr/bin/google-chrome-stable', '/usr/bin/google-chrome',
+            '/usr/bin/chromium-browser', '/usr/bin/chromium',
+        ];
+        for (const p of candidates) {
+            if (fs.existsSync(p)) { chromePath = p; break; }
+        }
+        // Skip snap chromium — it can't run as www-data due to snap confinement.
+        if (!chromePath) {
+            // Download Chromium via @puppeteer/browsers
+            const { install } = require('@puppeteer/browsers');
+            const chromeDir = '/var/www/.cache/puppeteer';
+            try {
+                log('No system Chrome found. Downloading Chromium...');
+                const browser = await install({
+                    browser: 'chrome',
+                    buildId: 'latest',
+                    cacheDir: chromeDir,
+                    downloadProgressCallback: (downloadedBytes, totalBytes) => {
+                        if (totalBytes) {
+                            const pct = Math.round(downloadedBytes / totalBytes * 100);
+                            if (pct % 25 === 0 || downloadedBytes === totalBytes) {
+                                log(`Downloading Chromium: ${pct}%`);
+                            }
+                        }
+                    },
+                });
+                chromePath = browser.executablePath;
+                log('Downloaded Chromium: ' + chromePath);
+            } catch (e) {
+                log('Failed to download Chromium: ' + e.message);
+                // Last resort — try /snap/bin/chromium anyway
+                if (fs.existsSync('/snap/bin/chromium')) {
+                    chromePath = '/snap/bin/chromium';
+                    log('Falling back to snap chromium');
+                }
+            }
+            if (!fs.existsSync(chromeDir)) {
+                fs.mkdirSync(chromeDir, { recursive: true, mode: 0o755 });
+            }
+        }
+    }
+    if (chromePath) {
+        process.env.PUPPETEER_EXECUTABLE_PATH = chromePath;
+    }
+
     const puppeteerOpts = {
         headless: true,
         args: [
@@ -78,7 +153,6 @@ function startClient() {
             '--disable-features=Crashpad',
         ],
     };
-    const chromePath = process.env.PUPPETEER_EXECUTABLE_PATH;
     if (chromePath) {
         puppeteerOpts.executablePath = chromePath;
         log('Using Chrome: ' + chromePath);
@@ -104,6 +178,8 @@ function startClient() {
         connectionStatus = 'connected';
         currentQR = null;
         currentStatusMessage = 'WhatsApp connected and online';
+        dailyCount = 0;
+        hourlyCount = 0;
         log('WhatsApp connected');
     });
 
@@ -152,12 +228,10 @@ app.post('/api/start', requireAuth, (req, res) => {
 
 app.post('/api/reconnect', requireAuth, async (req, res) => {
     log('Reconnect requested');
-
     if (client) {
         try { client.destroy(); } catch (e) {}
         client = null;
     }
-
     const authDir = path.join(SESSION_PATH, 'LocalAuth');
     if (fs.existsSync(authDir)) {
         try {
@@ -167,23 +241,19 @@ app.post('/api/reconnect', requireAuth, async (req, res) => {
             log('Failed to clear session: ' + e.message);
         }
     }
-
     connectionStatus = 'disconnected';
     currentQR = null;
     currentStatusMessage = 'Session cleared, reconnecting...';
-
     startClient();
     res.json({ success: true, message: 'Session cleared, reconnecting' });
 });
 
 app.post('/api/logout', requireAuth, async (req, res) => {
     log('Logout requested');
-
     if (client) {
         try { client.destroy(); } catch (e) {}
         client = null;
     }
-
     const authDir = path.join(SESSION_PATH, 'LocalAuth');
     if (fs.existsSync(authDir)) {
         try {
@@ -193,102 +263,117 @@ app.post('/api/logout', requireAuth, async (req, res) => {
             log('Failed to clear session: ' + e.message);
         }
     }
-
     connectionStatus = 'disconnected';
     currentQR = null;
     currentStatusMessage = 'Logged out';
-
     res.json({ success: true, message: 'Logged out' });
 });
 
 app.post('/api/send-test', requireAuth, async (req, res) => {
     const { number, message } = req.body;
-
     if (!number || !message) {
         return res.status(400).json({ error: 'Number and message required' });
     }
     if (connectionStatus !== 'connected' || !client) {
         return res.status(400).json({ error: 'WhatsApp not connected' });
     }
-
     const clean = formatNumber(number);
-
     try {
         const msg = await client.sendMessage(clean, message);
         log('Test sent to ' + clean + ' (id: ' + msg.id.id + ')');
-        res.json({
-            success: true,
-            message: 'Test message sent',
-            messageId: msg.id.id,
-        });
+        res.json({ success: true, message: 'Test message sent', messageId: msg.id.id });
     } catch (err) {
         log('Test send error to ' + clean + ': ' + err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
-app.post('/api/send', requireAuth, async (req, res) => {
-    const { courseName, activityTitle, activityUrl, actionType, instructor, targetNumbers, messageBody } = req.body;
+function sanitize(str) {
+    if (typeof str !== 'string') return '';
+    return str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '').trim();
+}
 
-    if (!activityTitle || !targetNumbers || !Array.isArray(targetNumbers)) {
+function validatePhone(raw) {
+    const cleaned = raw.toString().replace(/[^0-9]/g, '');
+    return cleaned.length >= 7 && cleaned.length <= 15;
+}
+
+app.post('/api/send', requireAuth, async (req, res) => {
+    const { activityTitle, targetNumbers, messageBody, courseName, activityUrl } = req.body;
+
+    if (!activityTitle || !targetNumbers || !Array.isArray(targetNumbers) || targetNumbers.length === 0) {
         return res.status(400).json({ error: 'Invalid payload' });
     }
     if (connectionStatus !== 'connected' || !client) {
         return res.status(400).json({ error: 'WhatsApp not connected' });
     }
 
+    const validPhones = targetNumbers.filter(p => validatePhone(p));
+    if (validPhones.length === 0) {
+        return res.status(400).json({ error: 'No valid phone numbers' });
+    }
+
+    resetCounters();
+
     let msg;
     if (messageBody) {
-        msg = messageBody;
-    } else if (TEMPLATE) {
-        msg = TEMPLATE
-            .replace(/{{courseName}}/g, courseName || 'Course')
-            .replace(/{{activityTitle}}/g, activityTitle)
-            .replace(/{{activityUrl}}/g, activityUrl || '')
-            .replace(/{{actionType}}/g, actionType || 'Update')
-            .replace(/{{instructor}}/g, instructor || 'Faculty')
-            .replace(/{{optoutUrl}}/g, OPTOUT_URL || '');
+        msg = sanitize(messageBody);
     } else {
         const link = activityUrl ? '\n' + activityUrl : '';
-        msg = '📢 *EduNotify* 📢\n\n' +
-            '*Course:* ' + (courseName || 'Course') + '\n' +
-            '*Instructor:* ' + (instructor || 'Faculty') + '\n' +
-            '*Action:* ' + (actionType || 'Update') + '\n' +
-            '*Item:* ' + activityTitle +
-            link + '\n\n' +
-            'Please log into the portal to view.\n' +
-            (OPTOUT_URL ? '\nTo opt out: ' + OPTOUT_URL : '');
+        msg = '*EduNotify*\n\n*Course:* ' + sanitize(courseName || 'Course') + '\n*Item:* ' + sanitize(activityTitle) + link + '\n\nPlease log into the portal to view.';
+    }
+
+    if (!msg || msg.length > 4096) {
+        return res.status(400).json({ error: 'Message empty or too long' });
     }
 
     let sent = 0;
     let failed = [];
+    let rateLimited = false;
     let index = 0;
 
-    for (let phone of targetNumbers) {
+    for (let phone of validPhones) {
+        resetCounters();
+
+        if (rateLimited) {
+            failed.push({ phone, error: 'Rate limited' });
+            continue;
+        }
+
+        if (dailyCount >= DAILY_LIMIT) {
+            log('Daily limit reached (' + DAILY_LIMIT + '). Stopping.');
+            failed.push({ phone, error: 'Daily limit reached' });
+            continue;
+        }
+        if (hourlyCount >= HOURLY_LIMIT) {
+            log('Hourly limit reached (' + HOURLY_LIMIT + '). Pausing 1 hour.');
+            await delay(3600000);
+            resetCounters();
+        }
+
         const clean = formatNumber(phone);
 
         let success = false;
-        let messageId = null;
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
                 const result = await client.sendMessage(clean, msg);
                 sent++;
+                dailyCount++;
+                hourlyCount++;
                 success = true;
-                messageId = result.id ? result.id.id : null;
-                log('Sent to ' + clean + ' (attempt ' + attempt + ', id: ' + messageId + ')');
-
-                if (messageId) {
-                    client.on('message_ack', (ackMsg) => {
-                        if (ackMsg.id.id === messageId) {
-                            log('Delivery update for ' + clean + ': ' + ackMsg.ack);
-                        }
-                    });
-                }
+                log('Sent to ' + clean + ' (#' + sent + '/day, attempt ' + attempt + ')');
                 break;
             } catch (err) {
+                const errMsg = (err.message || '').toLowerCase();
+                if (errMsg.includes('rate') || errMsg.includes('too many') || errMsg.includes('429') || errMsg.includes('wait')) {
+                    log('Rate limited on ' + clean + '. Pausing.');
+                    rateLimited = true;
+                    await delay(BATCH_PAUSE_MS);
+                    break;
+                }
                 log('Send error to ' + clean + ' (attempt ' + attempt + '/3): ' + err.message);
                 if (attempt < 3) {
-                    await delay(3000);
+                    await delay(jitter(5000));
                 }
             }
         }
@@ -298,17 +383,13 @@ app.post('/api/send', requireAuth, async (req, res) => {
         }
 
         index++;
-        if (index % BATCH_SIZE === 0 && index < targetNumbers.length) {
-            const remaining = targetNumbers.length - index;
-            log('Batch of ' + BATCH_SIZE + ' done. Pausing ' + (BATCH_PAUSE_MS / 1000) + 's. ' + remaining + ' remaining.');
-            await delay(BATCH_PAUSE_MS);
-        } else if (index < targetNumbers.length) {
-            await delay(2000 + Math.random() * 3000);
+        if (index < validPhones.length) {
+            await delay(8000 + Math.random() * 12000);
         }
     }
 
-    log('Notification sent to ' + sent + '/' + targetNumbers.length + ' recipients');
-    res.json({ success: true, sent, total: targetNumbers.length, failed: failed.length > 0 ? failed : undefined });
+    log('Sent ' + sent + '/' + validPhones.length + ' recipients (daily: ' + dailyCount + ')');
+    res.json({ success: true, sent, total: validPhones.length, failed: failed.length > 0 ? failed : undefined });
 });
 
 const server = app.listen(PORT, '127.0.0.1', () => {

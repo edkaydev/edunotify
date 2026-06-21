@@ -11,7 +11,7 @@
         <FIELD NAME="cmid" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="modname" TYPE="char" LENGTH="50" NOTNULL="true"/>
         <FIELD NAME="recipients" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
-        <FIELD NAME="eventtype" TYPE="char" LENGTH="30" NOTNULL="true"/>
+        <FIELD NAME="eventtype" TYPE="char" LENGTH="100" NOTNULL="true"/>
         <FIELD NAME="status" TYPE="char" LENGTH="20" NOTNULL="true"/>
         <FIELD NAME="error_msg" TYPE="text" NOTNULL="false" COMMENT="Detailed error message on failure"/>
         <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true"/>
@@ -86,6 +86,7 @@
       </KEYS>
       <INDEXES>
         <INDEX NAME="idx_attempts" UNIQUE="false" FIELDS="attempts"/>
+        <INDEX NAME="idx_timecreated" UNIQUE="false" FIELDS="timecreated"/>
       </INDEXES>
     </TABLE>
   </TABLES>

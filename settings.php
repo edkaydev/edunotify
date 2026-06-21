@@ -65,7 +65,7 @@ if ($hassiteconfig) {
         'local_edunotify/batchsize',
         get_string('batchsize', 'local_edunotify'),
         get_string('batchsize_desc', 'local_edunotify'),
-        '25',
+        '20',
         PARAM_INT
     ));
 
@@ -73,7 +73,23 @@ if ($hassiteconfig) {
         'local_edunotify/batchpause',
         get_string('batchpause', 'local_edunotify'),
         get_string('batchpause_desc', 'local_edunotify'),
-        '60',
+        '90',
+        PARAM_INT
+    ));
+
+    $settings->add(new admin_setting_configtext(
+        'local_edunotify/dailylimit',
+        get_string('dailylimit', 'local_edunotify'),
+        get_string('dailylimit_desc', 'local_edunotify'),
+        '500',
+        PARAM_INT
+    ));
+
+    $settings->add(new admin_setting_configtext(
+        'local_edunotify/hourlylimit',
+        get_string('hourlylimit', 'local_edunotify'),
+        get_string('hourlylimit_desc', 'local_edunotify'),
+        '80',
         PARAM_INT
     ));
 
@@ -91,7 +107,7 @@ if ($hassiteconfig) {
         get_string('message_templates_desc', 'local_edunotify')
     ));
 
-    $defaulttemplate = "📢 *EduNotify* 📢\n\n*Course:* {{courseName}}\n*Instructor:* {{instructor}}\n*Action:* {{actionType}}\n*Item:* {{activityTitle}}\n{{activityUrl}}\n\nPlease log into the portal to view.\n\nTo opt out, reply STOP or visit: {{optoutUrl}}";
+    $defaulttemplate = "[EN] *EduNotify* [EN]\n\n*Course:* {{courseName}}\n*Instructor:* {{instructor}}\n*Action:* {{actionType}}\n*Item:* {{activityTitle}}\n{{activityUrl}}\n\nPlease log into the portal to view.\n\nTo opt out, reply STOP or visit: {{optoutUrl}}";
 
     $settings->add(new admin_setting_configtextarea(
         'local_edunotify/template_course_module_created',
@@ -140,6 +156,6 @@ if ($hassiteconfig) {
     if ($botrunning && $botstatus['status'] === 'connected') {
         $settings->add(new admin_setting_heading('local_edunotify/connectedheading', '',
             '<div style="background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;padding:14px 18px;border-radius:10px;margin-top:10px;">' .
-            '✅ ' . get_string('bot_connected_msg', 'local_edunotify') . '</div>'));
+            '[OK] ' . get_string('bot_connected_msg', 'local_edunotify') . '</div>'));
     }
 }

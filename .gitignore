@@ -1,0 +1,9 @@
+bot/node_modules/
+bot/session/
+bot/.wwebjs_cache/
+bot/package-lock.json
+bot/bot.log
+.wwebjs_cache/
+index.php.bak
+.DS_Store
+._*

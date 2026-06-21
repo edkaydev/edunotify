@@ -97,7 +97,7 @@ function xmldb_local_edunotify_upgrade($oldversion) {
         set_config('batchpause', 60, 'local_edunotify');
         set_config('botport', 5001, 'local_edunotify');
 
-        $defaultbody = "📢 *EduNotify* 📢\n\n*Course:* {{courseName}}\n*Instructor:* {{instructor}}\n*Action:* {{actionType}}\n*Item:* {{activityTitle}}\n{{activityUrl}}\n\nPlease log into the portal to view.\n\nTo opt out, reply STOP or visit: {{optoutUrl}}";
+        $defaultbody = "*EduNotify*\n\n*Course:* {{courseName}}\n*Instructor:* {{instructor}}\n*Action:* {{actionType}}\n*Item:* {{activityTitle}}\n{{activityUrl}}\n\nPlease log into the portal to view.\n\nTo opt out, reply STOP or visit: {{optoutUrl}}";
         set_config('template_course_module_created', $defaultbody, 'local_edunotify');
 
         upgrade_plugin_savepoint(true, 2026061900, 'local', 'edunotify');
@@ -154,6 +154,29 @@ function xmldb_local_edunotify_upgrade($oldversion) {
         unset_config('quietstart', 'local_edunotify');
         unset_config('quietend', 'local_edunotify');
         upgrade_plugin_savepoint(true, 2026061903, 'local', 'edunotify');
+    }
+
+    if ($oldversion < 2026061905) {
+        $table = new xmldb_table('local_edunotify_queue');
+        $index = new xmldb_index('idx_timecreated', XMLDB_INDEX_NOTUNIQUE, ['timecreated']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+        upgrade_plugin_savepoint(true, 2026061905, 'local', 'edunotify');
+    }
+
+
+    if ($oldversion < 2026061906) {
+        $table = new xmldb_table('local_edunotify_log');
+        $field = new xmldb_field('eventtype', XMLDB_TYPE_CHAR, '100', null, XMLDB_NOTNULL);
+        $dbman->change_field_type($table, $field);
+        upgrade_plugin_savepoint(true, 2026061906, 'local', 'edunotify');
+    }
+
+    if ($oldversion < 2026061907) {
+        $template = "[EN] *EduNotify* [EN]\n\n*Course:* {{courseName}}\n*Instructor:* {{instructor}}\n*Action:* {{actionType}}\n*Item:* {{activityTitle}}\n{{activityUrl}}\n\nPlease log into the portal to view.\n\nTo opt out, reply STOP or visit: {{optoutUrl}}";
+        set_config('template_course_module_created', $template, 'local_edunotify');
+        upgrade_plugin_savepoint(true, 2026061907, 'local', 'edunotify');
     }
 
     return true;

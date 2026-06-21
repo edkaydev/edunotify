@@ -63,14 +63,14 @@ class util {
     public static function batch_get_user_phones(array $users): array {
         global $DB;
         $field = self::get_phone_field();
-        $userids = array_map(function($u) { return $u->id; }, $users);
+        $userids = array_map(function(\stdClass $u): int { return (int)$u->id; }, $users);
         if (empty($userids)) return [];
 
         $customdata = [];
         if ($field) {
             $rs = $DB->get_records('user_info_data', ['fieldid' => $field->id], '', 'userid, data');
             foreach ($rs as $r) {
-                $customdata[$r->userid] = trim($r->data ?? '');
+                $customdata[(int)$r->userid] = trim($r->data ?? '');
             }
         }
 
